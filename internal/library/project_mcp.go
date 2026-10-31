@@ -52,6 +52,7 @@ var projectMCPFiles = map[string]struct {
 	"qoder-cn":  {".qoder/settings.json", fmtOmp},
 	"codebuddy": {".mcp.json", fmtClaude},
 	"droid":     {".factory/mcp.json", fmtClaude},
+	"junie":     {".junie/mcp/mcp.json", fmtCursor},
 }
 
 // ProjectMCPFile is the file, in a project, an agent reads the project's

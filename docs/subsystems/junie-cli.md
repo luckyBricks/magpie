@@ -1,9 +1,10 @@
 # Junie CLI
 
-Status: **proposed**. Nothing here is implemented yet; this page is the spec the
-implementation PR is written and reviewed against. When it lands, move what
-holds into [Agent wiring](agent-wiring.md) and the [reference](../reference.md),
-link the source, and drop this status line.
+Status: **implemented, not yet tried against a real `junie`**. The agent is
+[`junie.go`](../../internal/agent/junie.go) with its tests in
+[`junie_test.go`](../../internal/agent/junie_test.go); what is still open is
+listed in [Not yet verified](#not-yet-verified). When that list is closed, move
+what holds into [Agent wiring](agent-wiring.md) and drop this status line.
 
 [Junie CLI](https://junie.jetbrains.com/docs/junie-cli.html) is JetBrains'
 terminal coding agent (command `junie`; Linux, macOS and Windows). magpie adds
@@ -26,7 +27,7 @@ The facts below about Junie come from its documentation
 
 | Part | Responsibility |
 | --- | --- |
-| Agent description | A `junie` entry in `internal/agent`: detection, config path, the model and small fields, the wiring below. |
+| Agent description | `junie` in `internal/agent` ([`junie.go`](../../internal/agent/junie.go)): detection, config path, the `model` and `small` fields, the wiring below. |
 | Wiring | One custom model profile, `magpie.json`, in Junie's models folder, and the model setting that selects it. |
 | Library | Instructions, MCP servers and skills magpie writes for Junie ([Library](library.md)). |
 | Not magpie's | Junie's own sign-in (JetBrains account, `JUNIE_API_KEY`), its BYOK keys, its hooks, trust decisions and other profiles. magpie leaves them as they are. |
@@ -61,7 +62,7 @@ its own, so magpie uses **Custom**:
      "id": "<the picked model>",
      "baseUrl": "http://127.0.0.1:<port>/v1/chat/completions",
      "apiType": "OpenAICompletion",
-     "apiKey": "magpie-junie",
+     "apiKey": "<the gateway key>",
      "displayName": "magpie",
      "primaryModel": {"id": "<the picked model>"},
      "fasterModel": {"id": "<the small model>"}
@@ -72,10 +73,10 @@ its own, so magpie uses **Custom**:
      `/v1/chat/completions` is the first choice because every provider's models
      are reachable through it; `OpenAIResponses` (`/v1/responses`) is the
      alternative if the real binary needs it for reasoning effort.
-   - The key `magpie-junie` names the agent in Usage, as `magpie-<agent>` does
-     for the others. It is written literally: a `${VAR}` reference makes the
-     profile fail to load when the variable is not set, and a Junie started from
-     a launcher has none.
+   - `apiKey` is the gateway's key for that place (`at.gwKey()`, as Droid's),
+     written literally: a `${VAR}` reference makes the profile fail to load when
+     the variable is not set, and a Junie started from a launcher has none.
+   - `displayName: "magpie"` is the mark of whose profile it is.
    - `fasterModel` is Junie's helper model (summaries, routing, memory
      extraction). It is the **small** field, as OpenCode's `small`. Left unset,
      it inherits the primary model's settings.
@@ -88,12 +89,14 @@ its own, so magpie uses **Custom**:
 3. The model picker lists the catalog's models and routing groups. Picking
    another model rewrites `magpie.json` (a profile holds one primary model);
    Junie reads it at start, so the Notice asks to restart open sessions.
-4. Disconnect removes `magpie.json` (only when it is still as magpie wrote it,
-   checked by the hash in `applied.json`) and puts the user's `model` back.
+4. Disconnect removes `magpie.json` (only a profile marked as magpie's) and
+   puts the user's `model` back; a `config.json` magpie made goes with it when
+   nothing else is left in it.
 
 `Set("")` returns the field to Junie's default model and takes the wiring out.
-The agent is `ListOnly`: a sync only brings the profile's model ids up to the
-catalog.
+The agent has no `Sync`: a profile holds one model, so there is no catalog to
+bring up to date. Drift (`Check`) compares the profile's `baseUrl` and `apiKey`
+with the gateway's, and reports a profile that is gone.
 
 An effort level (`effort` in `config.json`, `minimal` to `max`) belongs to
 Junie's own model list and is not offered on a custom profile until the real
@@ -101,8 +104,9 @@ binary shows it is sent (see below).
 
 ## Constraints and failure behavior
 
-- A `magpie.json` the user wrote themselves (not the hash magpie recorded) is a
-  conflict: report it, never overwrite it.
+- A `models/magpie.json` the user wrote themselves (its `displayName` isn't
+  `magpie`) is theirs: picking a magpie model reports a conflict and writes
+  nothing, and Disconnect leaves it in place.
 - Project config wins over user config for a trusted project. A project's
   `.junie/config.json` that sets `model` keeps winning over magpie's wiring; the
   Agents page says so, as it does for other agents' project overlays (drift is
@@ -122,9 +126,9 @@ binary shows it is sent (see below).
 
 | Kind | Where | Format |
 | --- | --- | --- |
-| MCP servers | `<home>/mcp/mcp.json` | `mcpServers`, command and remote (HTTP; SSE is not listed), `timeout` in milliseconds. Placeholders: Junie's `${...}` support is not documented here, so `library.json`'s `${NAME}` is written out per the real binary's behavior. |
+| MCP servers | `<home>/mcp/mcp.json`, a project's `.junie/mcp/mcp.json` | `mcpServers` in Cursor's form (`command`, `args`, `env`, or `url`, `headers`; no `type`), `fmtCursor` in [`targets.go`](../../internal/library/targets.go). |
 | Skills | `<home>/skills/<name>/`, a project's `.junie/skills/<name>/` | The shared Agent Skills folder form, linked or copied as for other agents. |
-| Instructions | A project's `AGENTS.md` | Junie reads the root `AGENTS.md` itself; a user-scope instructions file is not documented, so magpie does not write one until verified. |
+| Instructions | none | Junie reads a project's `AGENTS.md` itself; a user-scope instructions file isn't documented, so magpie writes none until it is verified. |
 
 [MCP router](mcp-router.md): Junie takes the one `magpie` server in place of
 the Library's servers, as for the other agents.
@@ -151,14 +155,15 @@ before the PR merges, and the PR body says what was run and what was not:
 
 ## Verification
 
-Planned, following the other agents' tests:
+Written, following the other agents' tests:
 
-- A sandbox-HOME test of Connect, a sync, a model pick and Disconnect on
-  `magpie.json` and `config.json`: user keys kept, `model` put back, a
-  foreign `magpie.json` left alone. Broken by hand: drop the hash check and
-  watch it fail.
-- `TestFolderVarsAreListed` with `JUNIE_HOME`.
-- An optional real-binary test gated by `MAGPIE_TEST_JUNIE_BIN`, as
-  StepCode's and Reasonix's: isolated home, a local test upstream, no
-  JetBrains or vendor credentials.
+- `TestJunie`, `TestJunieForeignProfile` and `TestJunieHomeAndNewFile` in
+  `internal/agent`: Connect, a model and small pick, user keys and profile
+  additions kept, drift, Disconnect putting `model` back, a foreign
+  `magpie.json` left alone, a made file going again, `$JUNIE_HOME`. `junie` is
+  also in `TestHandWiredMagpieProviderSiblings` and
+  `TestOwnProviderNamedAsMagpies`'s lists.
+- `JUNIE_HOME` is in `agentenv.Vars`.
+- Still to write: an optional real-binary test gated by `MAGPIE_TEST_JUNIE_BIN`,
+  as StepCode's and Reasonix's, once a `junie` has been tried.
 - The whole suite: `go vet -tags nogui ./... && go test -tags nogui ./...`.

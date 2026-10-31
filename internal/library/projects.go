@@ -74,6 +74,7 @@ var projectSkillsDirs = map[string]string{
 	"grok":        ".agents/skills",
 	"droid":       ".agents/skills",
 	"cline":       ".agents/skills",
+	"junie":       ".junie/skills",
 	"qoder":       ".qoder/skills",
 	"qoder-cn":    ".qoder/skills",
 	"codebuddy":   ".codebuddy/skills",

@@ -359,6 +359,15 @@ func targetOf(a *agent.Agent) *Target {
 		t.MCP = &mcpFile{Path: filepath.Join(a.Dir, "mcp.json"), Format: fmtClaude}
 		t.Instructions = filepath.Join(a.Dir, "AGENTS.md")
 		t.Skills = filepath.Join(a.Dir, "skills")
+	case "junie":
+		// Junie CLI's user-wide servers are mcp/mcp.json's mcpServers in its
+		// home ($JUNIE_HOME, else ~/.junie): command, args and env, or url
+		// and headers, with no type (junie.jetbrains.com/docs/
+		// junie-cli-mcp-configuration.html); its skills are skills/ there
+		// (docs/agent-skills.html). Its user-wide instructions file isn't
+		// documented, so none is written.
+		t.MCP = &mcpFile{Path: filepath.Join(a.Dir, "mcp", "mcp.json"), Format: fmtCursor}
+		t.Skills = filepath.Join(a.Dir, "skills")
 	case "qoder", "qoder-cn":
 		// Qoder's user-wide servers are its settings.json's mcpServers
 		// (docs.qoder.com/cli/mcp-reference), beside magpie's provider

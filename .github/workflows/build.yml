@@ -1,0 +1,70 @@
+name: Build
+
+# Test builds, to download and try a branch: the terminal magpie for every
+# platform, the Windows desktop app and the Linux desktop app, kept as
+# artifacts of the run. Nothing here is signed or published (a release is
+# release.yml's, on a tag). Runs on a push to any branch but main, and by hand.
+
+on:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # an artifact is a branch's build, not a release: its version says so
+  VERSION: dev-${{ github.run_number }}-${{ github.sha }}
+
+jobs:
+  cli:
+    name: CLI and Windows app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Terminal magpie, every platform
+        run: |
+          make release-cli VERSION="${VERSION::24}" TARGETS="darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64"
+
+      - name: Windows desktop app
+        run: make release-windows VERSION="${VERSION::24}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: magpie-cli-and-windows
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-app:
+    name: Linux desktop app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The GUI links GTK 3 and WebKitGTK 4.1 through cgo (see the Makefile)
+      - name: Install GTK and WebKitGTK
+        timeout-minutes: 15
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - run: make release-linux VERSION="${VERSION::24}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: magpie-linux-app
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
