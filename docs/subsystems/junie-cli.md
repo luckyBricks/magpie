@@ -168,7 +168,8 @@ OpenAI-compatible vendor that logged every request:
   and went to `primaryModel`, whether `fasterModel` named only an `id` or every
   field.
 - Junie ignores `HOME` (it is Java: `user.home`), so a sandbox needs
-  `JUNIE_HOME`.
+  `JUNIE_HOME`, and `-Duser.home=<sandbox>` in `JAVA_TOOL_OPTIONS` too: with
+  `JUNIE_HOME` set it still writes `instances/` under the real `~/.junie`.
 
 ## Still open
 

@@ -109,7 +109,10 @@ func TestJunieRealCLI(t *testing.T) {
 		cmd := proc.CommandContext(ctx, bin, "--skip-update-check", "--share-anonymous-statistics=false",
 			"--output-format=json", "--max-steps=6", "--task", "Create pong.txt containing pong")
 		cmd.Dir = work
-		cmd.Env = append(os.Environ(), "JUNIE_HOME="+jh)
+		// Junie is Java: it takes its home from user.home, not HOME, and
+		// writes instances/ there even with JUNIE_HOME set
+		cmd.Env = append(os.Environ(), "JUNIE_HOME="+jh,
+			"JAVA_TOOL_OPTIONS="+strings.TrimSpace(os.Getenv("JAVA_TOOL_OPTIONS")+" -Duser.home="+home))
 		out, err := cmd.Output()
 		return string(out), err
 	}
