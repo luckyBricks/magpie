@@ -22,8 +22,9 @@ func TestWSLOwnFolderTargets(t *testing.T) {
 	write(t, filepath.Join(h, ".factory", "settings.json"), "{}\n")
 	write(t, filepath.Join(h, ".config", "opencode", "opencode.json"), "{}\n")
 	write(t, filepath.Join(h, ".claude", "settings.json"), "{}\n")
+	write(t, filepath.Join(h, ".junie", "settings.json"), "{}\n")
 	t.Cleanup(agent.FakeWSL(map[string]string{
-		"Ubuntu": "home:/home/me\ndir:.hermes\nbin:hermes\ndir:.omp\nbin:omp\ndir:.factory\nbin:droid\ndir:.config/opencode\nbin:opencode\ndir:.claude\n",
+		"Ubuntu": "home:/home/me\ndir:.hermes\nbin:hermes\ndir:.omp\nbin:omp\ndir:.factory\nbin:droid\ndir:.config/opencode\nbin:opencode\ndir:.claude\ndir:.junie\nbin:junie\n",
 	}, map[string]string{"Ubuntu": root}))
 
 	const hermes = "hermes@wsl:Ubuntu"
@@ -32,6 +33,7 @@ func TestWSLOwnFolderTargets(t *testing.T) {
 		"omp@wsl:Ubuntu":      {".omp/agent/mcp.json", ".omp/agent/skills"},
 		"droid@wsl:Ubuntu":    {".factory/mcp.json", ".factory/skills"},
 		"opencode@wsl:Ubuntu": {".config/opencode/opencode.json", ".config/opencode/skills"},
+		"junie@wsl:Ubuntu":    {".junie/mcp/mcp.json", ".junie/skills"},
 	}
 	for id, w := range want {
 		tg := targetByID(id)
@@ -42,6 +44,15 @@ func TestWSLOwnFolderTargets(t *testing.T) {
 		if tg.MCP == nil || tg.MCP.Path != filepath.Join(h, w[0]) || !tg.MCP.WSL || tg.MCP.Distro != "Ubuntu" || tg.Skills != filepath.Join(h, w[1]) || !tg.Copy || tg.Agent.ID != id {
 			t.Errorf("%s: %+v (mcp %+v)", id, tg, tg.MCP)
 		}
+	}
+	junie := targetByID("junie@wsl:Ubuntu")
+	if junie == nil || junie.Instructions != filepath.Join(h, ".junie", "AGENTS.md") || !junie.MCP.Literal {
+		t.Fatalf("Junie's WSL instructions and MCP syntax: %+v", junie)
+	}
+	shared := "Use the distro's test tools."
+	ok(t)(SaveInstructions(InstructionsChange{Shared: &shared, Agents: []string{"junie@wsl:Ubuntu"}}))
+	if text := read(t, junie.Instructions); !strings.Contains(text, shared) {
+		t.Fatalf("Junie's WSL instructions: %s", text)
 	}
 	// OpenCode there reads the distro's Claude Code skills, not this machine's
 	if tg := targetByID("opencode@wsl:Ubuntu"); tg != nil && (len(tg.SkillsAlso) != 1 || tg.SkillsAlso[0] != "claude@wsl:Ubuntu") {

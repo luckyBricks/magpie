@@ -363,10 +363,10 @@ func targetOf(a *agent.Agent) *Target {
 		// Junie CLI's user-wide servers are mcp/mcp.json's mcpServers in its
 		// home ($JUNIE_HOME, else ~/.junie): command, args and env, or url
 		// and headers, with no type (junie.jetbrains.com/docs/
-		// junie-cli-mcp-configuration.html); its skills are skills/ there
-		// (docs/agent-skills.html). Its user-wide instructions file isn't
-		// documented, so none is written.
-		t.MCP = &mcpFile{Path: filepath.Join(a.Dir, "mcp", "mcp.json"), Format: fmtCursor}
+		// junie-cli-mcp-configuration.html). 3893.6 sends both ${NAME} and
+		// ${env:NAME} literally; its home AGENTS.md reaches the main prompt.
+		t.Instructions = filepath.Join(a.Dir, "AGENTS.md")
+		t.MCP = &mcpFile{Path: filepath.Join(a.Dir, "mcp", "mcp.json"), Format: fmtCursor, Literal: true}
 		t.Skills = filepath.Join(a.Dir, "skills")
 	case "qoder", "qoder-cn":
 		// Qoder's user-wide servers are its settings.json's mcpServers
@@ -757,7 +757,7 @@ func wslOpened(t *Target) {
 var ownFolder = map[string]bool{
 	"hermes": true, "omp": true, "opencode": true, "mimocode": true, "droid": true,
 	"grok": true, "commandcode": true, "atomcode": true, "qoder": true, "qoder-cn": true,
-	"minimax-code": true, "fx": true, "dsh": true, "qwen": true,
+	"minimax-code": true, "fx": true, "dsh": true, "qwen": true, "junie": true,
 }
 
 // wslOwnFolder is the target of a, an agent in a running WSL distro that

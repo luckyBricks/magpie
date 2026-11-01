@@ -1,6 +1,9 @@
 # Junie CLI
 
-Status: **implemented, tried end to end with junie 26.10.27 (3893.6) headless**.
+Status: **implemented; junie 26.10.27 (3893.6) verified on Linux in batch,
+TUI and ACP modes**. Native Windows and WSL execution still need their own
+machines; path, discovery, networking and stopped-distro contracts are covered
+by sandbox tests.
 The agent is [`junie.go`](../../internal/agent/junie.go), with its tests in
 [`junie_test.go`](../../internal/agent/junie_test.go) and the real-binary test
 [`junie_cli_test.go`](../../internal/agent/junie_cli_test.go). What is still
@@ -73,15 +76,17 @@ its own, so magpie uses **Custom**:
    - `baseUrl` is the complete endpoint: Junie appends no path. The gateway's
      `/v1/chat/completions` is the first choice because every provider's models
      are reachable through it; `OpenAIResponses` (`/v1/responses`) is the
-     alternative if the real binary needs it for reasoning effort.
+     alternative, verified through the gateway too. Neither protocol sends
+     effort for a custom model in 3893.6.
    - `apiKey` is the gateway's key for that place (`at.gwKey()`, as Droid's),
      written literally: a `${VAR}` reference makes the profile fail to load when
      the variable is not set, and a Junie started from a launcher has none.
    - `displayName: "magpie"` is the mark of whose profile it is.
-   - `fasterModel` is the **small** field, as OpenCode's `small`: Junie's docs
-     call it the helper model (summaries, routing, memory extraction). 3893.6
-     asked the primary model for every helper call it made headless, with
-     `fasterModel` set or not (below), so the field may change nothing yet.
+   - `fasterModel` is the **small** field, as OpenCode's `small`. 3893.6 uses
+     it for a TUI helper call. Batch and ACP titles and step summaries still
+     use primary. The binary's history compression and summarization resolvers
+     also fall back to primary for a custom profile: this field does not move
+     every helper or memory operation to the small model.
    - `temperature` is never written: Junie sends none for a custom model unless
      asked, and the provider's default is the right one for most models.
 2. magpie selects the profile with `"modelForLaunch": "custom:magpie"` in
@@ -105,21 +110,28 @@ bring up to date. Drift (`Check`) compares the profile's `baseUrl` and `apiKey`
 with the gateway's, and reports a profile that is gone and a `providerForLaunch`
 picked in Junie since.
 
-The gateway knows Junie's requests by their User-Agent (`UA: junie`;
-`junie-cli-batch:<version>` from a `--task` run), so Usage counts them as
-Junie CLI's.
+The gateway knows Junie's requests by their User-Agent (`UA: junie`):
+`junie-cli-batch:<version>`, `junie-cli:<version>` (TUI), and
+`junie-cli-acp:<version>`. Usage counts all three as Junie CLI's.
 
-An effort level (`effort` in `config.json`, `minimal` to `max`) belongs to
-Junie's own model list and is not offered on a custom profile until the real
-binary shows it is sent (see below).
+An effort level is not offered on a custom profile: 3893.6 sends neither
+`reasoning_effort` on Chat nor `reasoning` on Responses, even with
+`--model custom:magpie --effort high`. Junie's own effort selector does not
+establish that the endpoint receives one.
 
 ## Constraints and failure behavior
 
 - A `models/magpie.json` the user wrote themselves (its `displayName` isn't
   `magpie`) is theirs: picking a magpie model reports a conflict and writes
   nothing, and Disconnect leaves it in place.
-- Junie's settings and profile are read at start; there is no hot reload. A
-  running Junie TUI that saves its settings could write its own model back.
+- Junie's settings and profile are read at start; there is no hot reload.
+  A wired TUI task kept `modelForLaunch: custom:magpie` and no
+  `providerForLaunch`; it added unrelated settings beside them.
+- An unavailable endpoint remains selected. A refused connection is retried,
+  then reported as "Could not connect to the model provider. Check the network
+  connection." No fallback to another model was observed. The binary's LLM
+  client has five retries with exponential delay and a five-minute request
+  timeout. A transient startup 503 can recover without reconnecting magpie.
 - `--model` and `JUNIE_MODEL` beat `modelForLaunch`: a user who starts Junie
   with either isn't on magpie for that run.
 - A Junie that is not signed in to anything has no account: Custom needs none,
@@ -138,7 +150,22 @@ binary shows it is sent (see below).
 | --- | --- | --- |
 | MCP servers | `<home>/mcp/mcp.json`, a project's `.junie/mcp/mcp.json` | `mcpServers` in Cursor's form (`command`, `args`, `env`, or `url`, `headers`; no `type`), `fmtCursor` in [`targets.go`](../../internal/library/targets.go). |
 | Skills | `<home>/skills/<name>/`, a project's `.junie/skills/<name>/` | The shared Agent Skills folder form, linked or copied as for other agents. |
-| Instructions | none | Junie reads a project's `AGENTS.md` itself; a user-scope instructions file isn't documented, so magpie writes none until it is verified. |
+| Instructions | `<home>/AGENTS.md` | Loaded alongside the project's instructions, verified in requests reaching the fixture. Junie reads project files itself. |
+
+3893.6 does **not** expand `${NAME}` or `${env:NAME}` in MCP headers or a
+command's `env`: the fixture received both literally with the variable set.
+The target uses `fmtCursor` for the file's shape and `Literal: true` for its
+values. Direct Library writes report servers requiring expansion as unsupported. Sync
+removes such entries previously written by magpie, keeping their Library
+definition and user-owned entries. Custom model profiles resolve references
+separately and are unaffected.
+
+On Windows the default home is `%USERPROFILE%/.junie`, unless `JUNIE_HOME`
+is set. WSL Junie is a separate `junie@wsl:<distro>` agent, discovered by
+`.junie` or its Linux `junie` command. It uses the distro's files and gateway
+address, and gets copies of Library skills, home instructions and MCP config.
+Host `JUNIE_HOME` is ignored there. An overridden home inside the distro is
+not discovered, as magpie cannot read that distro's environment.
 
 [MCP router](mcp-router.md): Junie takes the one `magpie` server in place of
 the Library's servers, as for the other agents.
@@ -171,16 +198,27 @@ OpenAI-compatible vendor that logged every request:
   `JUNIE_HOME`, and `-Duser.home=<sandbox>` in `JAVA_TOOL_OPTIONS` too: with
   `JUNIE_HOME` set it still writes `instances/` under the real `~/.junie`.
 
+The remaining checks were run on 2026-11-01 with the same 3893.6 release
+(Linux amd64 archive SHA-256
+`dc88c2434c4d673d4df1fe579cfaaf34565b223c6a8702c6ee8e0494638f8635`):
+
+| Check | Observed behavior |
+| --- | --- |
+| TUI | Started from `modelForLaunch`, created a file and submitted through its tools; used `fasterModel` once and kept the selected profile in settings. |
+| ACP | `initialize`, `session/new` and `session/prompt` ran without JetBrains authentication, created the file and ended with `end_turn`. |
+| Responses | `/v1/responses` completed the tool round trip through the gateway to a Chat fixture returning SSE. Chat stays the default. |
+| Streaming | Batch, TUI and ACP custom requests all sent `stream: false`; Responses did too. No streaming capability is claimed for this version. |
+| Effort | Explicit high effort produced no reasoning field on either protocol. |
+| Endpoint down | A refused endpoint failed with a connection message and left settings selected; an initial 503 recovered on retry. |
+| Instructions and MCP | Home and project `AGENTS.md` both reached the primary prompt. MCP header and stdio environment references arrived literally. |
+
 ## Still open
 
-- The TUI and `--acp`: does `modelForLaunch` select the profile there too, does
-  the TUI write its own model back over magpie's, and what is its User-Agent.
-- Whether `fasterModel` is used anywhere (memory extraction, the TUI).
-- Streaming and `OpenAIResponses` (3893.6 sent `stream: false` headless).
-- A profile whose endpoint is down at start.
-- Windows paths (`%USERPROFILE%\.junie`) and WSL twins.
-- Whether a user-scope instructions file exists, and `${...}` in `mcp.json`.
-- Effort on a custom profile.
+- Native Windows CLI execution and a Windows host with real WSL distros.
+  This Linux session has neither Windows nor `wsl.exe`; cross-platform vet
+  and fake-WSL contract tests do not replace a run there. Check the default
+  and space-containing overridden home, TUI/ACP, NAT and mirrored networking,
+  and a stopped distro before describing those platforms as end-to-end tested.
 
 ## Verification
 
@@ -194,17 +232,25 @@ Written, following the other agents' tests:
   also in `TestHandWiredMagpieProviderSiblings` and
   `TestOwnProviderNamedAsMagpies`'s lists.
 - `JUNIE_HOME` is in `agentenv.Vars`.
-- `TestJunieRealCLI`, opt-in, as StepCode's and Reasonix's: magpie wires a
-  real junie from a user on a BYOK model, a `--task` runs through a real gateway
-  to a fixture vendor that drives `create` then `submit`, the file is written,
-  every call is counted as `junie`'s, and after Disconnect junie no longer
-  reaches the gateway. No JetBrains or vendor account is used.
+- `TestJunieRealCLI`, opt-in: batch Chat, Responses, explicit high effort on
+  both protocols, ACP, startup retry, and a Linux PTY for the TUI. The fixture
+  drives `create` then `submit`; the file is written, calls are attributed to
+  Junie, home instructions reach the request, and Disconnect restores the
+  previous BYOK selection. Batch also checks MCP's literal headers. No
+  JetBrains or vendor account is used. The PTY accepts Junie's first-run
+  project trust and configuration import dialogs. Normal test runs skip it.
+- `TestJunieLibrary`, `TestAgentMCPFiles/junie`, `TestWSLOwnFolderTargets`,
+  and `TestWSL*More*` cover home overrides (including spaces), instructions,
+  unexpanded MCP references, config preservation and WSL discovery,
+  NAT/mirrored addresses and stopped-distro behavior.
+- The whole suite: `go vet -tags nogui ./... && go test -tags nogui -timeout 45m ./...`.
 
-  ```sh
-  curl -fsSL https://junie.jetbrains.com/install.sh | bash
-  MAGPIE_TEST_JUNIE_BIN=~/.local/share/junie/versions/<version>/junie-app/bin/junie \
-    go test -tags nogui ./internal/agent -run '^TestJunieRealCLI$' -count=1
-  ```
+Run the real-binary check with an installed Junie:
 
-  It goes red when magpie leaves `providerForLaunch` in (tried by hand).
-- The whole suite: `go vet -tags nogui ./... && go test -tags nogui ./...`.
+```sh
+curl -fsSL https://junie.jetbrains.com/install.sh | bash
+MAGPIE_TEST_JUNIE_BIN=~/.local/share/junie/versions/<version>/junie-app/bin/junie \
+  go test -race -tags nogui ./internal/agent -run '^TestJunieRealCLI$' -count=1
+```
+
+It goes red when magpie leaves `providerForLaunch` in (tried by hand).

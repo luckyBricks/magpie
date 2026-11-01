@@ -2,6 +2,7 @@ package library
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -282,6 +283,72 @@ func TestRunServerAsks(t *testing.T) {
 		t.Fatalf("reply: %s", r)
 	}
 }
+
+// The server can write a notification before stdin's Write returns.
+// The call's stream must already be listening then, or the message is lost.
+func TestRunImmediateNotification(t *testing.T) {
+	resetRuns(t)
+	spec := runSpec{Command: "immediate-notification"}
+	runGiven(map[string]runSpec{"fake": spec})
+	s := session("immediate", "fake", spec, defaultInit())
+	c := &runChild{waits: map[string]chan json.RawMessage{}, done: make(chan struct{})}
+	c.in = &immediateRunInput{session: s, child: c}
+	s.mu.Lock()
+	s.child = c
+	s.mu.Unlock()
+	// This peer has no process. Detach it before resetRuns ends processes.
+	t.Cleanup(func() {
+		s.mu.Lock()
+		s.child = nil
+		s.mu.Unlock()
+		close(c.done)
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ServeRun(w, r, "fake")
+	}))
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "POST", srv.URL+RunPath+"fake", strings.NewReader(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"echo"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Mcp-Session-Id", s.id)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	rd := bufio.NewScanner(resp.Body)
+	for rd.Scan() {
+		if strings.HasPrefix(rd.Text(), "data: ") {
+			if !strings.Contains(rd.Text(), `"method":"notifications/resources/updated"`) {
+				t.Fatalf("notification: %s", rd.Text())
+			}
+			return
+		}
+	}
+	t.Fatalf("the call lost the server's immediate notification: %v", rd.Err())
+}
+
+type immediateRunInput struct {
+	session *runSession
+	child   *runChild
+}
+
+func (w *immediateRunInput) Write(b []byte) (int, error) {
+	var m rpcIn
+	if err := json.Unmarshal(b, &m); err != nil {
+		return 0, err
+	}
+	if m.Method == "tools/call" {
+		w.session.deliver(w.child, []byte(`{"jsonrpc":"2.0","method":"notifications/resources/updated","params":{"uri":"file:///pong.txt"}}`), nil, "notifications/resources/updated")
+	}
+	return len(b), nil
+}
+
+func (*immediateRunInput) Close() error { return nil }
 
 // A server saying its tools changed has the next session's tools/list go
 // to a server again.

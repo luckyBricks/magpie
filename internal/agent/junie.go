@@ -25,8 +25,8 @@ package agent
 // A models/magpie.json that isn't magpie's (its displayName isn't "magpie")
 // is the user's: it is refused, never overwritten.
 //
-// Tried with junie 3893.6, headless (--task), through the gateway to a
-// fake vendor: TestJunieRealCLI, and docs/subsystems/junie-cli.md.
+// Tried with junie 3893.6 headless, TUI and ACP: TestJunieRealCLI and
+// docs/subsystems/junie-cli.md.
 
 import (
 	"errors"
@@ -104,8 +104,8 @@ func junieAt(at place) *Agent {
 	}
 	return atomic(&Agent{
 		ID: "junie", Name: "Junie CLI", Icon: "junie", Aliases: []string{"junie-cli"}, Spelled: prefixed, NoNames: true,
-		// its requests say junie-cli-batch:<version> when it runs a --task
-		// (3893.6); the TUI's weren't seen
+		// 3893.6: junie-cli-batch:<version>, junie-cli:<version> (TUI),
+		// and junie-cli-acp:<version>
 		UA:  []string{"junie"},
 		Bin: "junie", Dir: dir, Path: path,
 		Notice: func() string {
@@ -185,9 +185,8 @@ func junieAt(at place) *Agent {
 				return append(group("Junie CLI", own), viaMagpie("junie", magpieID+"/")...)
 			},
 		}, {
-			// the helper model the profile names (fasterModel). Junie 3893.6
-			// asked the primary model for every helper call it made headless
-			// (task titles, step summaries), so this may change nothing yet
+			// 3893.6 uses fasterModel for the TUI's helper calls; headless
+			// and ACP still use primaryModel for titles and summaries.
 			Key: "small", Label: "small",
 			Get: func() string {
 				if !on() {

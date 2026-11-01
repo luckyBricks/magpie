@@ -3,6 +3,7 @@ package gui
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ func TestColdTurnsTaken(t *testing.T) {
 	t.Cleanup(func() { coldTurnsTaken = false; coldTurns.over.Store(false) })
 	var inStep, inPage, both atomic.Int32
 	asked, release := make(chan struct{}), make(chan struct{})
+	releaseStep := sync.OnceFunc(func() { close(release) })
 	page := coldTurn(func(http.ResponseWriter, *http.Request) {
 		inPage.Add(1)
 		if inStep.Load() > 0 {
@@ -33,7 +35,7 @@ func TestColdTurnsTaken(t *testing.T) {
 		warmUp(func() {
 			inStep.Add(1)
 			defer inStep.Add(-1)
-			<-asked
+			close(asked)
 			<-release
 		}, func() {
 			inStep.Add(1)
@@ -43,18 +45,25 @@ func TestColdTurnsTaken(t *testing.T) {
 			}
 		})
 	}()
+	// The warm-up owns the first turn before the page starts asking.
+	// Starting both goroutines together also permits the page to go first.
+	<-asked
 	answered := make(chan struct{})
 	go func() {
-		close(asked)
 		ask()
 		close(answered)
 	}()
+	t.Cleanup(func() {
+		releaseStep()
+		<-answered
+		<-warmed
+	})
 	select {
 	case <-answered:
 		t.Fatal("the page was answered while the warm-up's step read")
 	case <-time.After(50 * time.Millisecond):
 	}
-	close(release)
+	releaseStep()
 	<-answered
 	<-warmed
 	if both.Load() != 0 {

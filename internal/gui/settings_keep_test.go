@@ -160,6 +160,7 @@ func TestSettingsSaveKeepsWhatItDoesNotSend(t *testing.T) {
 		PlainNames:           true,
 		PlainOwnNames:        true,
 		BareModelIDs:         true,
+		SearchAll:            true,
 		CodexAgentsV1:        true,
 		CodexTitles:          "off",
 		CodexDescriptions:    "fake/m1",
