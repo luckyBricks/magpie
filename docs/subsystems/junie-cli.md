@@ -65,18 +65,46 @@ its own, so magpie uses **Custom**:
      "apiType": "OpenAICompletion",
      "apiKey": "<the gateway key>",
      "displayName": "magpie",
-     "primaryModel": {"id": "<the picked model>"},
-     "fasterModel": {"id": "<the small model>"}
+     "primaryModel": {
+       "id": "<the picked model>",
+       "baseUrl": "http://127.0.0.1:<port>/v1/chat/completions",
+       "apiType": "OpenAICompletion"
+     },
+     "fasterModel": {
+       "id": "<the small model>",
+       "baseUrl": "http://127.0.0.1:<port>/v1/chat/completions",
+       "apiType": "OpenAICompletion"
+     }
    }
    ```
 
-   - `baseUrl` is the complete endpoint: Junie appends no path. The gateway's
-     `/v1/chat/completions` is the first choice because every provider's models
-     are reachable through it; `OpenAIResponses` (`/v1/responses`) is the
-     alternative if the real binary needs it for reasoning effort.
+   - **Each role is asked on the API its model's provider serves it on
+     natively** (`junieAPI`, the choice Grok Build's `api_backend` and Droid's
+     `provider` make), so the gateway relays what Junie sent as it is instead
+     of translating:
+
+     | The model is served natively on | `apiType` | `baseUrl` path |
+     | --- | --- | --- |
+     | OpenAI Responses (a GPT, a ChatGPT sign-in, a group of them) | `OpenAIResponses` | `/v1/responses` |
+     | Anthropic Messages (a Claude) | `Anthropic` | `/v1/messages` |
+     | Chat, or not known | `OpenAICompletion` | `/v1/chat/completions` |
+
+     Junie's fourth value, `Google`, is not written: a model whose native API
+     is Gemini's stays on Chat, which every provider's models can be reached
+     through.
+   - `baseUrl` is the complete endpoint: Junie appends no path, so it changes
+     with the API. `primaryModel` and `fasterModel` each carry their own
+     `baseUrl` and `apiType`, which override the profile's, because the two
+     models can differ (a Claude as primary and a DeepSeek as helper). The
+     profile's own are the primary model's: Junie requires them, and an older
+     magpie wrote only those (below).
    - `apiKey` is the gateway's key for that place (`at.gwKey()`, as Droid's),
-     written literally: a `${VAR}` reference makes the profile fail to load when
-     the variable is not set, and a Junie started from a launcher has none.
+     written literally: a `${VAR}` reference makes the profile fail to load
+     when the variable is not set, and a Junie started from a launcher has
+     none. A `${NAME}` reference the user put there themselves is **theirs**:
+     picking a model keeps it, and `Check` does not call it drift, as magpie
+     cannot see Junie's environment. A literal key the user typed over
+     magpie's is the wiring and is put back.
    - `displayName: "magpie"` is the mark of whose profile it is.
    - `fasterModel` is the **small** field, as OpenCode's `small`: Junie's docs
      call it the helper model (summaries, routing, memory extraction). 3893.6
@@ -91,8 +119,13 @@ its own, so magpie uses **Custom**:
    `config.json` (`byok`, `proxies`, `hooks`, …) and the user's other profiles
    stay as they are.
 3. The model picker lists the catalog's models and routing groups. Picking
-   another model rewrites `magpie.json` (a profile holds one primary model);
-   Junie reads it at start, so the Notice asks to restart open sessions.
+   another model rewrites `magpie.json` (a profile holds one primary model),
+   its API with it, and brings the helper model's baseUrl and apiType up to
+   date; Junie reads it at start, so the Notice asks to restart open
+   sessions. A profile an older magpie wrote (the address on the profile
+   alone, the roles naming an id only) is on Chat at the gateway and still
+   works as it is; it takes the model's own API the next time a model is
+   picked.
 4. Disconnect removes `magpie.json` (only a profile marked as magpie's) and
    puts the user's `modelForLaunch` and `providerForLaunch` back; a
    `settings.json` magpie made goes with it when nothing else is left in it.
@@ -101,9 +134,12 @@ its own, so magpie uses **Custom**:
 
 `Set("")` returns the field to Junie's default model and takes the wiring out.
 The agent has no `Sync`: a profile holds one model, so there is no catalog to
-bring up to date. Drift (`Check`) compares the profile's `baseUrl` and `apiKey`
-with the gateway's, and reports a profile that is gone and a `providerForLaunch`
-picked in Junie since.
+bring up to date. Drift (`Check`) compares each role's address (its
+`baseUrl`, else the profile's) with the gateway's at the path for that role's
+`apiType`, and the `apiKey` with the gateway's, and reports a profile that is
+gone and a `providerForLaunch` picked in Junie since. The `apiType` itself is
+not drift: it follows the model, and a model whose provider's API changed is
+asked on the old one until it is picked again.
 
 The gateway knows Junie's requests by their User-Agent (`UA: junie`;
 `junie-cli-batch:<version>` from a `--task` run), so Usage counts them as
@@ -164,6 +200,22 @@ OpenAI-compatible vendor that logged every request:
   through its tool loop (`create` of a file, then `submit`), and the file was
   written.
 - Its User-Agent is `junie-cli-batch:26.10.27`.
+- `apiType` `Anthropic` and `OpenAIResponses` each POST to the profile's
+  `baseUrl` exactly as written (`/v1/messages`, `/v1/responses`), non-streamed
+  headless, with the same 14 tools. The Anthropic request carries
+  `Authorization: Bearer <apiKey>`, not `x-api-key`, with `anthropic-version`
+  and `anthropic-beta`; the gateway takes a key from either on every route. A
+  task ran through its tool loop on each, against a vendor that speaks that
+  API (`TestJunieRealCLI`'s three runs), and the vendor was asked on the same
+  path, not translated to another.
+- A role's `baseUrl` and `apiType` override the profile's, as the docs say:
+  a profile with them on `primaryModel` only works.
+- Junie's Responses reader fails on a reply without the fields a real one
+  carries (`tools` first: "The model response could not be read"); a fixture
+  needs them, a real vendor has them.
+- `apiKey` `${NAME}` is resolved from Junie's own environment: with the
+  variable set the request carries its value, unset the profile doesn't load
+  ("Cannot find authorization") and no request is made, with exit status 0.
 - Helper calls (the task's title, a step's summary, a chat title) carry no tools
   and went to `primaryModel`, whether `fasterModel` named only an `id` or every
   field.
@@ -176,7 +228,8 @@ OpenAI-compatible vendor that logged every request:
 - The TUI and `--acp`: does `modelForLaunch` select the profile there too, does
   the TUI write its own model back over magpie's, and what is its User-Agent.
 - Whether `fasterModel` is used anywhere (memory extraction, the TUI).
-- Streaming and `OpenAIResponses` (3893.6 sent `stream: false` headless).
+- Streaming (3893.6 sent `stream: false` headless on all three APIs; the TUI's
+  isn't known).
 - A profile whose endpoint is down at start.
 - Windows paths (`%USERPROFILE%\.junie`) and WSL twins.
 - Whether a user-scope instructions file exists, and `${...}` in `mcp.json`.
@@ -194,11 +247,21 @@ Written, following the other agents' tests:
   also in `TestHandWiredMagpieProviderSiblings` and
   `TestOwnProviderNamedAsMagpies`'s lists.
 - `JUNIE_HOME` is in `agentenv.Vars`.
-- `TestJunieRealCLI`, opt-in, as StepCode's and Reasonix's: magpie wires a
-  real junie from a user on a BYOK model, a `--task` runs through a real gateway
-  to a fixture vendor that drives `create` then `submit`, the file is written,
-  every call is counted as `junie`'s, and after Disconnect junie no longer
-  reaches the gateway. No JetBrains or vendor account is used.
+- `TestJunieAsksEachModelNatively`: each of the three APIs gets its `apiType`
+  and gateway path, a Claude primary beside a DeepSeek helper keep their own,
+  picking the primary again leaves the helper's, a helper pointed elsewhere is
+  drift, and a profile an older magpie wrote is not.
+  `TestJunieKeepsAnEnvironmentKey`: a `${NAME}` apiKey survives a pick and is
+  not drift; a different literal is.
+- `TestJunieRealCLI`, opt-in, as StepCode's and Reasonix's, once per API
+  (`chat`, `responses`, `anthropic`): magpie wires a real junie from a user on
+  a BYOK model, a `--task` runs through a real gateway to a fixture vendor on
+  that API that drives `create` then `submit`, the file is written, the vendor
+  was asked on the API's own path, every call is counted as `junie`'s, and
+  after Disconnect junie no longer reaches the gateway. The `chat` run also
+  moves the key to `${MAGPIE_JUNIE_KEY}`: it works with the variable set, and
+  with it unset junie doesn't load the profile and asks nothing. No JetBrains
+  or vendor account is used.
 
   ```sh
   curl -fsSL https://junie.jetbrains.com/install.sh | bash
@@ -206,5 +269,8 @@ Written, following the other agents' tests:
     go test -tags nogui ./internal/agent -run '^TestJunieRealCLI$' -count=1
   ```
 
-  It goes red when magpie leaves `providerForLaunch` in (tried by hand).
+  It goes red when magpie leaves `providerForLaunch` in, and when `junieAPI`
+  always answers Chat (both tried by hand); the unit tests go red when
+  `junieAPI` answers Chat, when a pick overwrites a `${NAME}` key, and when
+  `Check` skips the helper role.
 - The whole suite: `go vet -tags nogui ./... && go test -tags nogui ./...`.

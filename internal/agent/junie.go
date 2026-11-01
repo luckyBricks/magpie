@@ -15,13 +15,22 @@ package agent
 // model-select line says modelInSettings=null), and a providerForLaunch
 // keeps it from a custom model ("Cannot find authorization").
 //
-// magpie writes the profile models/magpie.json, speaking chat completions
-// to the gateway, with the model picked as primaryModel and the "small"
-// pick as fasterModel, sets modelForLaunch to custom:magpie and takes
-// providerForLaunch out. What the user had in both is stashed and put back
-// when magpie steps out, and the profile goes again then. config.json, the
-// rest of settings.json and the user's other profiles are left alone, as
-// is anything the user added to magpie's profile (temperature, extraBody).
+// magpie writes the profile models/magpie.json to the gateway, with the
+// model picked as primaryModel and the "small" pick as fasterModel, sets
+// modelForLaunch to custom:magpie and takes providerForLaunch out. What the
+// user had in both is stashed and put back when magpie steps out, and the
+// profile goes again then. config.json, the rest of settings.json and the
+// user's other profiles are left alone, as is anything the user added to
+// magpie's profile (temperature, extraBody).
+//
+// Each role is asked on the API its model's provider serves it on natively
+// (junieAPI), so the gateway relays what Junie sent as it is: apiType
+// OpenAIResponses to /v1/responses, Anthropic to /v1/messages, else
+// OpenAICompletion to /v1/chat/completions. baseUrl is the whole URL, so it
+// changes with the API; both roles carry their own baseUrl and apiType (a
+// role's overrides the profile's), as the two models may differ. apiKey is
+// written literally, but a ${NAME} reference the user put there is theirs
+// (Junie resolves it from its environment) and is kept.
 // A models/magpie.json that isn't magpie's (its displayName isn't "magpie")
 // is the user's: it is refused, never overwritten.
 //
@@ -31,10 +40,14 @@ package agent
 import (
 	"errors"
 	"path/filepath"
+	"regexp"
+	"slices"
 
 	"github.com/tidwall/gjson"
 
+	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/provider"
 )
 
 const (
@@ -46,6 +59,33 @@ const (
 	junieLaunch   = "modelForLaunch"
 	junieProvider = "providerForLaunch"
 )
+
+// junieEndpoints are the apiTypes magpie writes, each with the gateway path
+// Junie sends it to. Junie also takes "Google", which magpie leaves out:
+// a model on Gemini's API is asked on Chat.
+var junieEndpoints = map[string]string{
+	"OpenAICompletion": "/v1/chat/completions",
+	"OpenAIResponses":  "/v1/responses",
+	"Anthropic":        "/v1/messages",
+}
+
+// junieEnvRef is a ${NAME} reference to an environment variable, which
+// Junie resolves in apiKey when it loads a profile (and fails to load the
+// profile when NAME is not set).
+var junieEnvRef = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}`)
+
+// junieAPI is the apiType a model of magpie's is asked on: the API its
+// provider serves it on natively, as grokBackend and droid choose it; a
+// model whose native API is Chat or not known stays on Chat.
+func junieAPI(m catalog.Model) string {
+	switch {
+	case slices.Contains(m.APIs, string(provider.Responses)):
+		return "OpenAIResponses"
+	case slices.Contains(m.APIs, string(provider.Anthropic)):
+		return "Anthropic"
+	}
+	return "OpenAICompletion"
+}
 
 func junie(home string) *Agent { return junieAt(here(home)) }
 
@@ -61,7 +101,25 @@ func junieAt(at place) *Agent {
 	// keyNew marks a settings.json magpie made, which goes again once
 	// nothing is left in it
 	keyNew := "junie:" + path + ":new"
-	endpoint := func() string { return at.v1() + "/chat/completions" }
+	// apiOf is the apiType the catalog's model ref is asked on
+	apiOf := func(ref string) string {
+		for _, m := range magpieModels("junie") {
+			if m.ID == ref {
+				return junieAPI(m)
+			}
+		}
+		return "OpenAICompletion"
+	}
+	// role is a model role's (primaryModel, fasterModel) own id, baseUrl and
+	// apiType for ref
+	role := func(k, ref string) []edit.KV {
+		api := apiOf(ref)
+		return []edit.KV{
+			{Path: k + ".id", Value: ref},
+			{Path: k + ".baseUrl", Value: at.gw() + junieEndpoints[api]},
+			{Path: k + ".apiType", Value: api},
+		}
+	}
 	get := func(k string) string { v, _ := edit.GetJSON(path, k); return v }
 	model := func() string { return get(junieLaunch) }
 	pget := func(k string) string { v, _ := edit.GetJSON(prof, k); return v }
@@ -70,13 +128,22 @@ func junieAt(at place) *Agent {
 	ours := func() bool { return exists() && pget("displayName") == junieMark }
 	on := func() bool { return model() == junieCustom && ours() && get(junieProvider) == "" }
 	writeProfile := func(ref string) error {
+		// the profile's own are the primary model's (Junie asks for them)
+		api := apiOf(ref)
 		kvs := []edit.KV{
 			{Path: "id", Value: ref},
-			{Path: "baseUrl", Value: endpoint()},
-			{Path: "apiType", Value: "OpenAICompletion"},
-			{Path: "apiKey", Value: at.gwKey()},
+			{Path: "baseUrl", Value: at.gw() + junieEndpoints[api]},
+			{Path: "apiType", Value: api},
 			{Path: "displayName", Value: junieMark},
-			{Path: "primaryModel.id", Value: ref},
+		}
+		// a ${NAME} the user put in apiKey is theirs
+		if !junieEnvRef.MatchString(pget("apiKey")) {
+			kvs = append(kvs, edit.KV{Path: "apiKey", Value: at.gwKey()})
+		}
+		kvs = append(kvs, role("primaryModel", ref)...)
+		// the helper model is asked as the catalog says now, and at this address
+		if id := pget("fasterModel.id"); id != "" {
+			kvs = append(kvs, role("fasterModel", id)...)
 		}
 		return edit.SetJSON(prof, kvs...)
 	}
@@ -124,8 +191,37 @@ func junieAt(at place) *Agent {
 			if p := get(junieProvider); p != "" {
 				return "Junie starts on its " + p + " provider (providerForLaunch in settings.json), so it doesn't reach magpie"
 			}
-			return wiringOff("Junie CLI", prof, func(k string) (string, bool) { return edit.GetJSON(prof, k) },
-				"baseUrl", endpoint(), "apiKey", at.gwKey())
+			// each role is asked at its own address: its baseUrl and apiType,
+			// else the profile's, whatever the apiType the user left it on
+			inherit := func(r, k string) string {
+				if v := pget(r + "." + k); v != "" {
+					return v
+				}
+				return pget(k)
+			}
+			for _, r := range []string{"primaryModel", "fasterModel"} {
+				if r == "fasterModel" && pget("fasterModel.id") == "" {
+					continue
+				}
+				path, ok := junieEndpoints[inherit(r, "apiType")]
+				if !ok {
+					path = junieEndpoints["OpenAICompletion"]
+				}
+				base := inherit(r, "baseUrl")
+				if msg := wiringOff("Junie CLI", prof, func(string) (string, bool) { return base, base != "" },
+					"baseUrl", at.gw()+path); msg != "" {
+					return msg
+				}
+			}
+			// a ${NAME} is Junie's to resolve from its own environment: not
+			// known from here, so not drift
+			return wiringOff("Junie CLI", prof, func(k string) (string, bool) {
+				v, ok := edit.GetJSON(prof, k)
+				if junieEnvRef.MatchString(v) {
+					return at.gwKey(), true
+				}
+				return v, ok
+			}, "apiKey", at.gwKey())
 		},
 		Fields: []Field{{
 			Key: "model", Label: "model",
@@ -209,7 +305,7 @@ func junieAt(at place) *Agent {
 				if !ok {
 					return errors.New("Junie's helper model must be one of magpie's")
 				}
-				return edit.SetJSON(prof, edit.KV{Path: "fasterModel.id", Value: ref})
+				return edit.SetJSON(prof, role("fasterModel", ref)...)
 			},
 			Options: func(map[string]string) []Option { return viaMagpie("junie", magpieID+"/") },
 		}},
