@@ -673,6 +673,13 @@ func ServeRun(w http.ResponseWriter, r *http.Request, name string) {
 		return
 	}
 	reply := c.wait(m.ID)
+	var events chan []byte
+	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		// A server can ask the client as soon as it reads the call.
+		// Register its stream before handing the call to the server.
+		events = s.open()
+		defer s.close(events)
+	}
 	if err := c.send(line.Bytes()); err != nil {
 		c.unwait(m.ID)
 		runReply(w, rpcError(m.ID, -32603, "the server "+name+" ended"))
@@ -689,7 +696,7 @@ func ServeRun(w http.ResponseWriter, r *http.Request, name string) {
 			remember(spec, m.Method, r.Result)
 		}
 	}
-	if !strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+	if events == nil {
 		select {
 		case b, ok := <-reply:
 			if !ok {
@@ -703,8 +710,6 @@ func ServeRun(w http.ResponseWriter, r *http.Request, name string) {
 		}
 		return
 	}
-	events := s.open()
-	defer s.close(events)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)

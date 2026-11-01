@@ -29,8 +29,9 @@ func TestUpdateNotWritableSaysWhy(t *testing.T) {
 	old := Version
 	Version = "0.1.10"
 	defer func() { Version = old }()
-	was := canElevate
-	defer func() { canElevate = was }()
+	wasE, wasC := canElevate, inContainer
+	t.Cleanup(func() { canElevate, inContainer = wasE, wasC })
+	inContainer = func() bool { return false }
 
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "magpie.exe")

@@ -36,6 +36,18 @@ agents RTK, a CLI that cuts shell output down before the model reads it.
 
 ## Runtime path
 
+Junie CLI's user-scope instructions, MCP file, skills and WSL twins are
+described in [Junie CLI](junie-cli.md#library). Its MCP values are literal:
+direct writes requiring environment expansion are reported as unsupported, and
+sync takes out previously managed entries of those servers. The Library's
+definition and servers the user wrote themselves are kept.
+
+For command servers served at `/mcp/run/<name>`, an event-stream call
+registers its stream before sending the call to the server. A server can
+ask `roots/list` or send a notification immediately, before the command's
+stdin write returns; both must reach the caller (`TestRunServerAsks`,
+`TestRunImmediateNotification` in [`mcp_run_test.go`](../../internal/library/mcp_run_test.go)).
+
 1. **Edit.** The Library page or `magpie library` calls an exported function such as `SaveServer`, `ServerAgents`, `InstallSkills`, `SkillAgents` or `SetSkillHow`. The skills and servers pages each have Select, Turn all on, Turn all off and Remove all. Select's bar calls `SomeSkillsAgents` or `SomeServersAgents` (`/api/library/{skills,servers}/agents-some`), Turn all on or off calls `EverySkillAgents` or `EveryServerAgents` for the agents shown, and Remove all calls `RemoveSkills` or `RemoveServers`. The hooks page has Select and Remove all too (`SomeHooksAgents`, `RemoveHooks`). Each of these is one change that takes every item out as a single removal would (#1027). Select's bar also has Remove… (#1852), which asks first, naming the count, and sends only the picked names to `RemoveSkills`, `RemoveServers` or `RemoveHooks`; ticking a group's or part's header picks all of it. A name that wasn't removed stays picked, with its error in its row's place (`pickErrs`), and the status names it; when every name fails the endpoint answers 400 and the sheet stays open. A row's agent chips start with All (`allChip` in `plugins/library/client.js`), which gives the item to every agent shown that can take it, or takes it from them all; the pickers that choose the agents before an item is added (installing skills from a repository or the market, adding, bringing in or installing a server) have the same All: most start with every agent lit, and one agent alone took a click on each of the others (#1531).
 2. **Change.** `change` edits `library.json` under the lock and calls `sync`.
 3. **Write.** For each target, `syncInstructions`, `syncMCP`, `syncHooks` and `syncSubagents` write magpie's part in the agent's format and record it in `Applied`. Skills are linked or copied into the agent's skills folder. A copy edited since it was made is taken into the library first.

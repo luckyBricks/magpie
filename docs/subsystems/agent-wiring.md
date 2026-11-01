@@ -152,6 +152,7 @@ something else shows up as drift.
 ## Verification
 
 ```sh
+go test -tags nogui ./internal/agent -run 'TestJunie|TestWSL.*More'
 go test -tags nogui ./internal/agent -run '^TestStepCode'
 go test -tags nogui ./internal/agent ./internal/update ./internal/cli -run 'TestAgy|TestShellFunction|TestWithFnBlock|TestShellProfiles'
 node --test internal/gui/tests/agy-launch.test.cjs

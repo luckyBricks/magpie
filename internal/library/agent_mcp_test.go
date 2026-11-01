@@ -33,6 +33,20 @@ func TestAgentMCPFiles(t *testing.T) {
 		pre func(t *testing.T, h string)
 	}{
 		{
+			id: "junie", file: ".junie/mcp/mcp.json",
+			user: `{"mcpServers":{"mine":{"command":"uvx","args":["mine"],"timeout":30}}}`,
+			fs:   entry{"command": "npx", "args": []any{"-y", "@mcp/fs"}, "env": entry{"K": "V"}},
+			web:  entry{"url": "https://example.com/mcp", "headers": entry{"Authorization": "Bearer x"}},
+			sse:  entry{"url": "https://example.com/sse"},
+		},
+		{
+			id: "junie", file: "Junie Home/mcp/mcp.json", env: map[string]string{"JUNIE_HOME": "Junie Home"},
+			user: `{"mcpServers":{"mine":{"command":"uvx","args":["mine"]}}}`,
+			fs:   entry{"command": "npx", "args": []any{"-y", "@mcp/fs"}, "env": entry{"K": "V"}},
+			web:  entry{"url": "https://example.com/mcp", "headers": entry{"Authorization": "Bearer x"}},
+			sse:  entry{"url": "https://example.com/sse"},
+		},
+		{
 			id: "omp", file: ".omp/agent/mcp.json",
 			user: `{"$schema": "x", "mcpServers": {"mine": {"command": "uvx", "args": ["mine"], "timeout": 30}}}`,
 			fs:   entry{"command": "npx", "args": []any{"-y", "@mcp/fs"}, "env": entry{"K": "V"}},
@@ -177,9 +191,9 @@ func TestAgentMCPFiles(t *testing.T) {
 			}
 			p := filepath.Join(h, c.file)
 			write(t, p, c.user)
-			// omp, Cline and CodeBuddy have an install command, so with the
-			// MCP file alone each is gone (#2177): its CLI beside the folder
-			holdCLI(t, h, map[string]string{"omp": "omp", "cline": "cline", "codebuddy": "codebuddy"}[c.id])
+			// omp, Cline, CodeBuddy and Junie have an install command: the
+			// folder alone doesn't make them present (#2177). Give each its CLI.
+			holdCLI(t, h, map[string]string{"omp": "omp", "cline": "cline", "codebuddy": "codebuddy", "junie": "junie"}[c.id])
 			parse := func() map[string]entry {
 				t.Helper()
 				var doc map[string]any
@@ -264,6 +278,11 @@ func TestAgentMCPFiles(t *testing.T) {
 			for _, want := range []Server{stdio, web, sse} {
 				if want.Transport == "sse" && c.noSSE {
 					continue
+				}
+				// Junie's URL has no transport marker: it tries HTTP and
+				// falls back to SSE, so importing it uses the default HTTP.
+				if c.id == "junie" && want.Transport == "sse" {
+					want.Transport = "http"
 				}
 				if s := back[want.Name]; s == nil || !s.same(&want) {
 					t.Errorf("%s read back as %+v", want.Name, s)

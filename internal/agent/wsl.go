@@ -500,6 +500,9 @@ var wslKinds = []wslKind{
 		}},
 	{id: "stepcode", name: "StepCode", dir: ".stepcode", in: stepcodeIn,
 		asleep: wslOwnAsleep("stepcode", "model")},
+	{id: "junie", name: "Junie CLI", dir: ".junie", bin: "junie", in: junieAt,
+		restart: newNotice("{agent} in WSL {distro} reads its settings at start-up — restart open junie sessions to use this."),
+		asleep:  wslOwnAsleep("junie", "model", "small")},
 	// only its settings.json: its sign-in, sessions and prompt history,
 	// read on this machine for Claude Code here, aren't read in a distro
 	{id: "claude", name: "Claude Code", dir: ".claude", bin: "claude", in: claudeIn,

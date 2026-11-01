@@ -18,6 +18,7 @@ import (
 var wslMore = []struct {
 	id, file, suffix string
 }{
+	{"junie", ".junie/models/magpie.json", "/v1/chat/completions"},
 	{"opencode", ".config/opencode/opencode.json", "/v1"},
 	{"mimocode", ".config/mimocode/mimocode.json", "/v1"},
 	{"kimi", ".kimi-code/config.toml", "/v1"},
@@ -70,7 +71,7 @@ func moveHostDirs(t *testing.T) string {
 	moved := t.TempDir()
 	for _, v := range []string{"OPENCODE_CONFIG_DIR", "MIMOCODE_HOME", "DEVECO_CONFIG_DIR", "KIMI_CODE_HOME", "KIMI_SHARE_DIR", "PI_CODING_AGENT_DIR",
 		"HERMES_HOME", "GROK_HOME", "FACTORY_HOME_OVERRIDE", "MINIMAX_DATA_DIR", "QODER_CONFIG_DIR", "QODERCN_CONFIG_DIR", "DSH_HOME", "MISTER_MORPH_CONFIG",
-		"CODEBUDDY_CONFIG_DIR", "CLINE_DIR", "CLINE_DATA_DIR", "ATOMCODE_HOME", "REASONIX_HOME", "SNOW_CONFIG_DIR", "MOTHX_DIR", "PENGUIN_HOME", "APPDATA"} {
+		"CODEBUDDY_CONFIG_DIR", "CLINE_DIR", "CLINE_DATA_DIR", "ATOMCODE_HOME", "REASONIX_HOME", "SNOW_CONFIG_DIR", "MOTHX_DIR", "PENGUIN_HOME", "JUNIE_HOME", "APPDATA"} {
 		t.Setenv(v, filepath.Join(moved, v))
 	}
 	return moved
