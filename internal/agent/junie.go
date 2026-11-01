@@ -4,23 +4,29 @@ package agent
 // ~/.junie ($JUNIE_HOME is that folder itself). Its own models are the
 // ones its JetBrains account or its BYOK keys give; any other endpoint is
 // a custom model profile, models/<id>.json, selected as "custom:<id>". A
-// profile holds one primary model and an optional fasterModel, the helper
-// it asks for summaries and routing, with the endpoint (baseUrl, the whole
-// URL: Junie appends no path), apiType and apiKey shared by both.
-// config.json's "model" is the model it starts on.
+// profile holds one primary model and an optional fasterModel, with the
+// endpoint (baseUrl, the whole URL: Junie appends no path), apiType and
+// apiKey shared by both.
+//
+// The model Junie starts on is settings.json's modelForLaunch, beside
+// providerForLaunch, the BYOK provider it starts on: Junie's own file,
+// which it writes too (JunieSettings in junie 26.10.27, 3893.6). Its docs
+// say config.json's "model" sets it; 3893.6 doesn't read that (its log's
+// model-select line says modelInSettings=null), and a providerForLaunch
+// keeps it from a custom model ("Cannot find authorization").
 //
 // magpie writes the profile models/magpie.json, speaking chat completions
 // to the gateway, with the model picked as primaryModel and the "small"
-// pick as fasterModel, and sets config.json's model to custom:magpie. The
-// model the user had is stashed and put back when magpie steps out, and
-// the profile goes again then. Everything else in config.json (provider,
-// byok, proxies, hooks) and the user's other profiles are left alone, as
+// pick as fasterModel, sets modelForLaunch to custom:magpie and takes
+// providerForLaunch out. What the user had in both is stashed and put back
+// when magpie steps out, and the profile goes again then. config.json, the
+// rest of settings.json and the user's other profiles are left alone, as
 // is anything the user added to magpie's profile (temperature, extraBody).
 // A models/magpie.json that isn't magpie's (its displayName isn't "magpie")
 // is the user's: it is refused, never overwritten.
 //
-// Not tried against a real junie binary yet: docs/subsystems/junie-cli.md
-// lists what is open.
+// Tried with junie 3893.6, headless (--task), through the gateway to a
+// fake vendor: TestJunieRealCLI, and docs/subsystems/junie-cli.md.
 
 import (
 	"errors"
@@ -35,6 +41,10 @@ const (
 	junieProfile = "magpie"
 	junieCustom  = "custom:" + junieProfile
 	junieMark    = "magpie" // the profile's displayName: whose it is
+	// settings.json's keys for the model and the BYOK provider Junie
+	// starts on
+	junieLaunch   = "modelForLaunch"
+	junieProvider = "providerForLaunch"
 )
 
 func junie(home string) *Agent { return junieAt(here(home)) }
@@ -44,19 +54,21 @@ func junieAt(at place) *Agent {
 	if dir == "" {
 		dir = at.join(".junie")
 	}
-	path := filepath.Join(dir, "config.json")
+	path := filepath.Join(dir, "settings.json")
 	prof := filepath.Join(dir, "models", junieProfile+".json")
-	keyModel := "junie:" + path + ":model"
-	// keyNew marks a config.json magpie made, which goes again once nothing
-	// is left in it
+	keyModel := "junie:" + path + ":" + junieLaunch
+	keyProv := "junie:" + path + ":" + junieProvider
+	// keyNew marks a settings.json magpie made, which goes again once
+	// nothing is left in it
 	keyNew := "junie:" + path + ":new"
 	endpoint := func() string { return at.v1() + "/chat/completions" }
-	model := func() string { v, _ := edit.GetJSON(path, "model"); return v }
+	get := func(k string) string { v, _ := edit.GetJSON(path, k); return v }
+	model := func() string { return get(junieLaunch) }
 	pget := func(k string) string { v, _ := edit.GetJSON(prof, k); return v }
 	// exists: a profile named magpie is there; ours: and it is magpie's
 	exists := func() bool { return isFile(prof) }
 	ours := func() bool { return exists() && pget("displayName") == junieMark }
-	on := func() bool { return model() == junieCustom && ours() }
+	on := func() bool { return model() == junieCustom && ours() && get(junieProvider) == "" }
 	writeProfile := func(ref string) error {
 		kvs := []edit.KV{
 			{Path: "id", Value: ref},
@@ -68,17 +80,33 @@ func junieAt(at place) *Agent {
 		}
 		return edit.SetJSON(prof, kvs...)
 	}
-	put := func(v string) error {
-		if v == "" {
-			if !isFile(path) {
-				return nil
+	// put sets the model Junie starts on, and the provider with it ("" takes
+	// a key out)
+	put := func(v, prov string) error {
+		var kvs []edit.KV
+		var del []string
+		for _, kv := range [][2]string{{junieLaunch, v}, {junieProvider, prov}} {
+			if kv[1] == "" {
+				del = append(del, kv[0])
+			} else {
+				kvs = append(kvs, edit.KV{Path: kv[0], Value: kv[1]})
 			}
-			return edit.DelJSON(path, "model")
 		}
-		return edit.SetJSON(path, edit.KV{Path: "model", Value: v})
+		if len(del) > 0 && isFile(path) {
+			if err := edit.DelJSON(path, del...); err != nil {
+				return err
+			}
+		}
+		if len(kvs) == 0 {
+			return nil
+		}
+		return edit.SetJSON(path, kvs...)
 	}
 	return atomic(&Agent{
 		ID: "junie", Name: "Junie CLI", Icon: "junie", Aliases: []string{"junie-cli"}, Spelled: prefixed, NoNames: true,
+		// its requests say junie-cli-batch:<version> when it runs a --task
+		// (3893.6); the TUI's weren't seen
+		UA:  []string{"junie"},
 		Bin: "junie", Dir: dir, Path: path,
 		Notice: func() string {
 			if Running(`(^|/)junie( |$)`) {
@@ -92,6 +120,9 @@ func junieAt(at place) *Agent {
 			}
 			if !ours() {
 				return "Junie's magpie model profile (models/magpie.json) is gone, so it no longer reaches magpie"
+			}
+			if p := get(junieProvider); p != "" {
+				return "Junie starts on its " + p + " provider (providerForLaunch in settings.json), so it doesn't reach magpie"
 			}
 			return wiringOff("Junie CLI", prof, func(k string) (string, bool) { return edit.GetJSON(prof, k) },
 				"baseUrl", endpoint(), "apiKey", at.gwKey())
@@ -110,8 +141,8 @@ func junieAt(at place) *Agent {
 						return errors.New("Junie already has a model profile named magpie (models/magpie.json) that isn't magpie's; rename it first")
 					}
 					if !on() {
-						forget(keyModel, keyNew)
-						stash(map[string]string{keyModel: model()})
+						forget(keyModel, keyProv, keyNew)
+						stash(map[string]string{keyModel: model(), keyProv: get(junieProvider)})
 						if !isFile(path) {
 							stash(map[string]string{keyNew: "1"})
 						}
@@ -119,12 +150,14 @@ func junieAt(at place) *Agent {
 					if err := writeProfile(ref); err != nil {
 						return err
 					}
-					return put(junieCustom)
+					return put(junieCustom, "")
 				}
-				made := false
+				made, prov := false, get(junieProvider)
 				if on() || ours() {
 					made = unstash(keyNew) != ""
-					// back to what the user had
+					// back to what the user had: their provider whichever
+					// model they step out to
+					prov = unstash(keyProv)
 					if v == "" {
 						v = unstash(keyModel)
 					} else {
@@ -134,7 +167,7 @@ func junieAt(at place) *Agent {
 						return err
 					}
 				}
-				if err := put(v); err != nil {
+				if err := put(v, prov); err != nil {
 					return err
 				}
 				if made {
@@ -152,7 +185,9 @@ func junieAt(at place) *Agent {
 				return append(group("Junie CLI", own), viaMagpie("junie", magpieID+"/")...)
 			},
 		}, {
-			// the helper model Junie asks for summaries and routing
+			// the helper model the profile names (fasterModel). Junie 3893.6
+			// asked the primary model for every helper call it made headless
+			// (task titles, step summaries), so this may change nothing yet
 			Key: "small", Label: "small",
 			Get: func() string {
 				if !on() {
@@ -183,5 +218,5 @@ func junieAt(at place) *Agent {
 
 // what junie says after a change (notice.go)
 var (
-	noticeJunie = newNotice("Junie CLI reads its config at start-up — restart open junie sessions to use this.")
+	noticeJunie = newNotice("Junie CLI reads its settings at start-up — restart open junie sessions to use this.")
 )

@@ -12,7 +12,7 @@ import (
 func junieSandbox(t *testing.T) (home, conf, prof string) {
 	home, _ = museHome(t)
 	t.Setenv("JUNIE_HOME", "")
-	conf = filepath.Join(home, ".junie", "config.json")
+	conf = filepath.Join(home, ".junie", "settings.json")
 	prof = filepath.Join(home, ".junie", "models", "magpie.json")
 	return
 }
@@ -33,11 +33,12 @@ func junieJSON(t *testing.T, path string) map[string]any {
 func TestJunie(t *testing.T) {
 	home, conf, prof := junieSandbox(t)
 	os.MkdirAll(filepath.Dir(conf), 0o755)
+	// Junie's own settings.json, as 3893.6 writes it, on a BYOK model
 	orig := `{
-  "model": "sonnet",
-  "provider": "anthropic",
-  "byok": {"anthropic": "sk-ant-x"},
-  "hooks": {"SessionStart": []}
+    "ecoModePerModel": "{}",
+    "subagentsMode": "Auto",
+    "modelForLaunch": "sonnet",
+    "providerForLaunch": "anthropic"
 }
 `
 	os.WriteFile(conf, []byte(orig), 0o644)
@@ -69,9 +70,10 @@ func TestJunie(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// the provider goes: a BYOK one keeps Junie from a custom model
 	m := junieJSON(t, conf)
-	if m["model"] != "custom:magpie" || m["provider"] != "anthropic" || !reflect.DeepEqual(m["byok"], want["byok"]) {
-		t.Fatalf("config: %v", m)
+	if _, ok := m["providerForLaunch"]; ok || m["modelForLaunch"] != "custom:magpie" || m["subagentsMode"] != "Auto" || m["ecoModePerModel"] != "{}" {
+		t.Fatalf("settings: %v", m)
 	}
 	p := junieJSON(t, prof)
 	if p["id"] != "deepseek/pro" || p["baseUrl"] != gatewayV1()+"/chat/completions" || p["apiType"] != "OpenAICompletion" ||
@@ -122,6 +124,14 @@ func TestJunie(t *testing.T) {
 	os.MkdirAll(filepath.Dir(prof), 0o755)
 	os.WriteFile(prof, b, 0o644)
 
+	// a BYOK provider picked in Junie afterwards: not on magpie, and said
+	b, _ = os.ReadFile(conf)
+	os.WriteFile(conf, []byte(strings.Replace(string(b), `"modelForLaunch"`, `"providerForLaunch": "openai", "modelForLaunch"`, 1)), 0o644)
+	if f.Get() == "magpie/deepseek/flash" || !strings.Contains(a.Check(), "openai provider") {
+		t.Fatalf("provider: %q %q", f.Get(), a.Check())
+	}
+	os.WriteFile(conf, b, 0o644)
+
 	// stepping out puts back what the user had, and takes the profile away
 	if err := f.Set(""); err != nil {
 		t.Fatal(err)
@@ -140,7 +150,7 @@ func TestJunie(t *testing.T) {
 	if err := f.Set("opus"); err != nil {
 		t.Fatal(err)
 	}
-	if got := junieJSON(t, conf); got["model"] != "opus" || a.Wired() {
+	if got := junieJSON(t, conf); got["modelForLaunch"] != "opus" || got["providerForLaunch"] != "anthropic" || a.Wired() {
 		t.Fatalf("own: %v", got)
 	}
 	if _, err := os.Stat(prof); !os.IsNotExist(err) {
@@ -175,14 +185,14 @@ func TestJunieHomeAndNewFile(t *testing.T) {
 	moved := filepath.Join(home, "elsewhere")
 	t.Setenv("JUNIE_HOME", moved)
 	a := junie(home)
-	if a.Dir != moved || a.Path != filepath.Join(moved, "config.json") {
+	if a.Dir != moved || a.Path != filepath.Join(moved, "settings.json") {
 		t.Fatalf("home: %s %s", a.Dir, a.Path)
 	}
 	f := a.Field("model")
 	if err := f.Set("magpie/deepseek/pro"); err != nil {
 		t.Fatal(err)
 	}
-	if junieJSON(t, a.Path)["model"] != "custom:magpie" {
+	if junieJSON(t, a.Path)["modelForLaunch"] != "custom:magpie" {
 		t.Fatal("not set")
 	}
 	if err := f.Set(""); err != nil {
